@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 func ok(err error) bool { return err == nil }
@@ -22,6 +26,17 @@ type WsController struct {
 	remotePcs        map[string]*RemotePC
 	mapMutex         sync.Mutex
 	disconnectPcChan chan string
+	mongoClient      *mongo.Client
+	db               *mongo.Database
+}
+
+/// NewWsController creates a new websocket controller
+func NewWsController(mongoClient *mongo.Client) *WsController {
+
+	return &WsController{remotePcs: make(map[string]*RemotePC),
+		disconnectPcChan: make(chan string),
+		mongoClient:      mongoClient,
+		db:               mongoClient.Database("remote_pc")}
 }
 
 /**
@@ -57,6 +72,14 @@ TODO: Create a key validation
 func (wsController *WsController) newUserHandler(response http.ResponseWriter, req *http.Request) {
 	remotePcKey := mux.Vars(req)["key"]
 
+	username := req.Header.Get(http.CanonicalHeaderKey("x-username"))
+	password := req.Header.Get(http.CanonicalHeaderKey("x-password"))
+
+	if len(username) == 0 || len(password) == 0 {
+		response.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+
 	if remotePc, found := wsController.remotePcs[remotePcKey]; found {
 		if remotePc.user != nil {
 			// PC already have a user connected
@@ -64,17 +87,54 @@ func (wsController *WsController) newUserHandler(response http.ResponseWriter, r
 			return
 		}
 
+		user := NewUser(username, password, remotePc, wsController.db)
+
+		if user == nil {
+			response.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
 		wsConn, err := upgrader.Upgrade(response, req, nil)
 		if ok(err) {
-			user := NewUser("usuario", wsConn, remotePc)
-			remotePc.user = user
+			user.wsConn = wsConn
+			remotePc.userConnected(user)
 			go user.readRoutine()
 			log.Printf("User connected to %s", remotePcKey)
 			return
 		}
+
+		log.Printf("Failed to upgrade websocket connection. Error: %s\n", err.Error())
 	}
 	log.Printf("User tryied to connect to %s", remotePcKey)
 	response.WriteHeader(http.StatusNotFound)
+}
+
+func (wsController *WsController) createUser(response http.ResponseWriter, req *http.Request) {
+	remotePcKey := mux.Vars(req)["key"]
+
+	decoder := json.NewDecoder(req.Body)
+	userData := make(map[string]string)
+	err := decoder.Decode(&userData)
+
+	if err != nil {
+		log.Printf("Failed to parse user data -- %s\n", err.Error())
+		response.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	collection := wsController.mongoClient.Database("remote_pc").Collection("users")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	userData["pc_key"] = remotePcKey
+	_, err = collection.InsertOne(ctx, userData)
+
+	if err != nil {
+		log.Printf("Failed to create user -- %s\n", err.Error())
+		response.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	response.WriteHeader(http.StatusCreated)
 }
 
 func (wsController *WsController) disconnectPC() {

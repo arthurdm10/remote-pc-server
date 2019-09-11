@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
+	"log"
 	"time"
+
+	"go.mongodb.org/mongo-driver/mongo"
+
+	"go.mongodb.org/mongo-driver/bson"
 
 	"github.com/gorilla/websocket"
 )
@@ -12,21 +18,46 @@ RemotePC - PC that can be accessed remotetly
 type RemotePC struct {
 	key string
 
-	conn *websocket.Conn
-
-	user *User
-
+	conn       *websocket.Conn //websocket connection
+	user       *User           // current connected user
 	controller *WsController
+	collection *mongo.Collection //mongodb pcs collection
 }
 
 func NewRemotePc(key string, wsConn *websocket.Conn, wsController *WsController) *RemotePC {
+	collection := wsController.db.Collection("pcs")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result := collection.FindOne(ctx, bson.M{"key": key})
+
+	if result.Err() != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_, err := collection.InsertOne(ctx, bson.M{"key": key})
+		if err != nil {
+			log.Printf("Failed to create a PC document -- Error: %s\n", err.Error())
+			return nil
+		}
+		log.Printf("Document created for PC %s\n", key)
+	} else {
+		log.Printf("Document exists for PC %s\n", key)
+	}
+
 	return &RemotePC{key: key,
 		conn:       wsConn,
-		controller: wsController}
+		controller: wsController,
+		collection: collection,
+	}
 }
 
 func (remotePc *RemotePC) getConn() *websocket.Conn {
 	return remotePc.conn
+}
+
+func (remotePc *RemotePC) userConnected(user *User) error {
+	remotePc.user = user
+	return ClientWriteJSON(remotePc, map[string]interface{}{"type": "info", "code": 0xfc, "data": user.username})
 }
 
 func (remotePc *RemotePC) readRoutine() {
@@ -47,7 +78,7 @@ func (remotePc *RemotePC) readRoutine() {
 
 func (remotePc *RemotePC) disconnectUser() {
 	if remotePc.user != nil {
-		remotePc.user.conn.WriteControl(websocket.CloseMessage, nil, time.Now().Add(time.Second*10))
+		remotePc.user.wsConn.WriteControl(websocket.CloseMessage, nil, time.Now().Add(time.Second*10))
 		// remotePc.user.conn.Close()
 
 		remotePc.user = nil

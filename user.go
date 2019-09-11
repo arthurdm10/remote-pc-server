@@ -1,7 +1,12 @@
 package main
 
 import (
-	"sync"
+	"context"
+	"log"
+	"time"
+
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 
 	"github.com/gorilla/websocket"
 )
@@ -32,18 +37,30 @@ func validRequest(jsonRequest map[string]interface{}) (string, bool) {
 type User struct {
 	username string
 
-	remotePc *RemotePC
-	conn     *websocket.Conn
-
-	mutex sync.Mutex
+	remotePc   *RemotePC
+	wsConn     *websocket.Conn
+	collection *mongo.Collection
 }
 
-func NewUser(username string, wsConn *websocket.Conn, pc *RemotePC) *User {
-	return &User{username: username, remotePc: pc, conn: wsConn}
+// NewUser return a user instance if the user exists
+func NewUser(username, password string, pc *RemotePC, db *mongo.Database) *User {
+	collection := db.Collection("users")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	user := collection.FindOne(ctx, bson.M{"username": username, "password": password, "pc_key": pc.key})
+
+	if user.Err() != nil {
+		log.Printf("User '%s' with password '%s' not found. Error: %s", username, password, user.Err().Error())
+		return nil
+	}
+
+	return &User{username: username, remotePc: pc, collection: collection}
 }
 
 func (user *User) getConn() *websocket.Conn {
-	return user.conn
+	return user.wsConn
 }
 
 func (user *User) readRoutine() {
@@ -51,7 +68,7 @@ func (user *User) readRoutine() {
 
 	for {
 
-		msgType, data, err := user.conn.ReadMessage()
+		msgType, data, err := user.wsConn.ReadMessage()
 
 		if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
 			break
