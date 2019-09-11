@@ -24,6 +24,16 @@ type RemotePC struct {
 	collection *mongo.Collection //mongodb pcs collection
 }
 
+func authenticatePc(username, password, key, string, db *mongo.Database) bool {
+	collection := db.Collection("pcs")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result := collection.FindOne(ctx, bson.M{"username": username, "password": password, "key": key})
+
+	return result.Err() == nil
+}
+
 func NewRemotePc(key string, wsConn *websocket.Conn, wsController *WsController) *RemotePC {
 	collection := wsController.db.Collection("pcs")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

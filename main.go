@@ -4,7 +4,6 @@ import (
 	"context"
 	"flag"
 	"log"
-	"math/rand"
 	"net/http"
 	"time"
 
@@ -27,30 +26,34 @@ func main() {
 
 	wsController := NewWsController(mongoClient)
 
-	rand.Seed(time.Now().UnixNano())
-
 	router := mux.NewRouter()
 
-	router.HandleFunc("/create/{key}", wsController.newPcHandler)   // new PC connected
-	router.HandleFunc("/access/{key}", wsController.newUserHandler) // user connect to a PC
-	router.HandleFunc("/create_user/{key}", wsController.createUser)
+	router.HandleFunc("/create_pc", wsController.registerRemotePc())                                               // create new PC
+	router.HandleFunc("/connect/{key}", wsController.remotePcOnly(wsController.newRemotePcConnection()))           // PC connected
+	router.HandleFunc("/access/{key}", wsController.newUserConnection())                                           // user connect to a PC
+	router.HandleFunc("/create_user/{key}", wsController.remotePcOnly(wsController.createUser()))                  // create a new user
+	router.HandleFunc("/set_user_permissions/{key}", wsController.remotePcOnly(wsController.setUserPermissions())) // create a new user
+
 	http.Handle("/", router)
+
 	go wsController.disconnectPC()
 
 	log.Fatal(http.ListenAndServe(":9002", nil))
 }
 
 func setupMongodb(mongoDbHost string) (*mongo.Client, error) {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://"+mongoDbHost))
+	defer cancel()
 
 	if err != nil {
 		return nil, err
 	}
 
 	// check if its connected
-	ctx, _ = context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
 	err = client.Ping(ctx, readpref.Primary())
+	defer cancel()
 
 	if err != nil {
 		return nil, err

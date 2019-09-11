@@ -1,0 +1,46 @@
+/**
+    por padrao, o usuario tem permissao para executar todos os comandos, sem nenhuma restricao
+    apenas os comandos com "allow: false" serao desabilitados
+*/
+
+{
+  "username": "user123",
+  "permissions": {
+    "commands": {
+      // comandos que o usuario podera executar
+      "ls_dir": {
+        "allow": true,
+        "restrictions": [
+          {
+            "path": "/etc",
+            "allow": false // o usuario nao tera acesso ao diretorio "/etc" e nem aos subdiretorios
+          }
+        ]
+      },
+      "donwload_file": {
+        "allow": true,
+        "restrictions": [
+          {
+            "path": "/var",
+            "allow": false, // o usuario nao podera fazer o download de arquivos no diretorio "/var"
+            "allow_subdir": true // mas podera fazer o download de arquivos nos subdiretorios
+          }
+        ]
+      },
+      "delete_file": {
+        "allow": false, // o usuario nao tem permissao para deletar arquivos em nenhum lugar, exceto nos diretorios
+        // especificados nas restricoes
+        "restrictions": [
+          {
+            "path": "/home", // podera somente os arquivos dentro do diretorio "/home"
+            "allow": true,
+            "allow_subdir": true // e nos seus subdiretorios
+          }
+        ]
+      },
+      "screenshot": {
+        "allow": false
+      }
+    }
+  }
+}

@@ -42,7 +42,7 @@ type User struct {
 	collection *mongo.Collection
 }
 
-// NewUser return a user instance if the user exists
+// NewUser returns a user only if it exists
 func NewUser(username, password string, pc *RemotePC, db *mongo.Database) *User {
 	collection := db.Collection("users")
 
