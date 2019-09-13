@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"log"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -148,6 +147,7 @@ func (user *User) havePermission(cmd string, args []string) bool {
 		}
 
 		// log.Printf("User permissions: %s", permission)
+
 		isFileCommand := cmd != "ls_dir"
 
 		if len(restrictions) > 0 {
@@ -156,31 +156,23 @@ func (user *User) havePermission(cmd string, args []string) bool {
 					restriction := res.(Json)
 					restrictionPath := restriction["path"].(string)
 
-					// /home/frost/flutter/test/file.txt
-					// /home/frost/flutter/test
-
-					requestedPath := arg
 					if isFileCommand {
-						requestedPath = filepath.Dir(arg)
-					}
+						requestedPath := filepath.Dir(arg)
 
-					if requestedPath == restrictionPath {
-						return restriction["allow"].(bool)
-					}
+						if requestedPath == restrictionPath {
+							return restriction["allow"].(bool)
+						}
 
-					if isFileCommand {
 						fileExt := filepath.Ext(arg)
+
 						if fileExt == "" {
-							//File doesnt have an extension, so let the remote PC decide
-							log.Printf("File doesnt have an extension %s, so let the remote PC decide", arg)
+							// log.Printf("File doesnt have an extension %s, so let the remote PC decide", arg)
 							return true
 						}
 
 						//its a file command (delete, download, rename)
 
 						//if it does have a extension, check if its in an allowed subdirectory
-
-						//check if file is in  a subdirectory of the restricted path
 						if strings.Index(requestedPath, restrictionPath) == 0 {
 							allowSubDir, ok := restriction["allow_subdir"].(bool)
 
@@ -192,6 +184,11 @@ func (user *User) havePermission(cmd string, args []string) bool {
 							return allowSubDir
 						}
 					}
+
+					if strings.Index(arg, restrictionPath) == 0 {
+						return restriction["allow"].(bool)
+					}
+					continue
 				}
 			}
 			return permission["allow"].(bool)
@@ -203,7 +200,6 @@ func (user *User) havePermission(cmd string, args []string) bool {
 }
 
 func sanitizeRequestArgs(requestArgs []interface{}) ([]string, ErrorCode) {
-	// sanitize args
 	sanitizedArgs := make([]string, len(requestArgs))
 	for i, arg := range requestArgs {
 		strArg, ok := arg.(string)
@@ -212,15 +208,18 @@ func sanitizeRequestArgs(requestArgs []interface{}) ([]string, ErrorCode) {
 			log.Printf("Invalid argument '%v' of type '%T'. It must be a string\n", arg, arg)
 			return nil, InvalidArguments
 		}
+		//(^\.\.)|(^\.\/)|(\/\.\.)|(\/\.[^a-z])
+		// re, err := regexp.Compile(`(^\.\.)|(^\.)|(\/\.\.)|(\/\.[^a-zA-Z])`)
 
-		re, err := regexp.Compile(`(^\.\.)|(^\.)|(\/\.\.)|(\/\.)`)
+		// if err != nil {
+		// 	return nil, InternalError
+		// }
 
-		if err != nil {
-			return nil, InternalError
-		}
+		// strArg = string(re.ReplaceAll([]byte(arg.(string)), []byte("")))
+		strArg = strings.ReplaceAll(strArg, `../`, "")
+		strArg = strings.ReplaceAll(strArg, `./`, "")
 
-		strArg = string(re.ReplaceAll([]byte(arg.(string)), []byte("")))
-		sanitizedArgs[i] = strArg
+		sanitizedArgs[i] = filepath.Clean(strArg)
 	}
 
 	return sanitizedArgs, 0
