@@ -73,9 +73,13 @@ func (remotePc *RemotePC) userConnected(user *User) error {
 func (remotePc *RemotePC) readRoutine() {
 	for {
 		msgType, data, err := remotePc.conn.ReadMessage()
-		if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
+
+		if err != nil {
 			break
 		}
+		// if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived, websocket.CloseServiceRestart) {
+		// 	break
+		// }
 
 		if remotePc.user == nil {
 			continue

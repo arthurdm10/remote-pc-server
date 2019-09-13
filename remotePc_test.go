@@ -15,7 +15,7 @@ func TestSuitePC(t *testing.T) {
 	client, err := setupMongodb("localhost:27017")
 	assert.Nil(t, err)
 
-	wsController := NewWsController(client)
+	wsController := NewWsController(client.Database("test_remote_pc"))
 
 	const (
 		key        = "fc58161e6b0da8e0cae8248f40141165"

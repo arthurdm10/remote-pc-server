@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -13,10 +14,14 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
+type Json = map[string]interface{}
+
 func main() {
 	var mongoDbHost string
+	var port string
 
 	flag.StringVar(&mongoDbHost, "mongodb-host", "localhost:27017", "host:port")
+	flag.StringVar(&port, "port", "9002", "port to listen to")
 
 	mongoClient, err := setupMongodb(mongoDbHost)
 
@@ -24,7 +29,7 @@ func main() {
 		log.Fatalf("Failed to create connection with mongodb: %s", err.Error())
 	}
 
-	wsController := NewWsController(mongoClient)
+	wsController := NewWsController(mongoClient.Database("remote_pc"))
 
 	router := mux.NewRouter()
 
@@ -37,8 +42,9 @@ func main() {
 	http.Handle("/", router)
 
 	go wsController.disconnectPC()
-
-	log.Fatal(http.ListenAndServe(":9002", nil))
+	fmt.Println("Listening on port: " + port)
+	http.ListenAndServe(":"+port, nil)
+	// log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
 func setupMongodb(mongoDbHost string) (*mongo.Client, error) {

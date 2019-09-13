@@ -3,6 +3,9 @@
     apenas os comandos com "allow: false" serao desabilitados
 */
 
+//allow_subdir so tera efeito em comandos relacionados a arquivos (delete, rename, download)
+//por padrao allow_subdir eh true para todos os comandos
+
 {
   "username": "user123",
   "permissions": {
@@ -14,6 +17,7 @@
           {
             "path": "/etc",
             "allow": false // o usuario nao tera acesso ao diretorio "/etc" e nem aos subdiretorios
+            // allow_subdir nao tem efeito algum nesse comando
           }
         ]
       },
@@ -32,7 +36,7 @@
         // especificados nas restricoes
         "restrictions": [
           {
-            "path": "/home", // podera somente os arquivos dentro do diretorio "/home"
+            "path": "/home", // podera deletar somente os arquivos dentro do diretorio "/home"
             "allow": true,
             "allow_subdir": true // e nos seus subdiretorios
           }

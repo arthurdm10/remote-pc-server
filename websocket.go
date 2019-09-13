@@ -31,12 +31,11 @@ type WsController struct {
 }
 
 /// NewWsController creates a new websocket controller
-func NewWsController(mongoClient *mongo.Client) *WsController {
+func NewWsController(db *mongo.Database) *WsController {
 
 	return &WsController{remotePcs: make(map[string]*RemotePC),
 		disconnectPcChan: make(chan string),
-		mongoClient:      mongoClient,
-		db:               mongoClient.Database("remote_pc")}
+		db:               db}
 }
 
 /**
@@ -173,6 +172,7 @@ func (wsController *WsController) createUser() http.HandlerFunc {
 		defer cancel()
 
 		userData["pc_key"] = remotePcKey
+		userData["permissions"] = map[string]interface{}{"commands": map[string]interface{}{}}
 		_, err = collection.InsertOne(ctx, userData)
 
 		if err != nil {
