@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	"go.mongodb.org/mongo-driver/mongo"
@@ -21,48 +23,17 @@ type RemotePC struct {
 	conn       *websocket.Conn //websocket connection
 	user       *User           // current connected user
 	controller *WsController
-	collection *mongo.Collection //mongodb pcs collection
-}
-
-func authenticatePc(username, password, key, string, db *mongo.Database) bool {
-	collection := db.Collection("pcs")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	result := collection.FindOne(ctx, bson.M{"username": username, "password": password, "key": key})
-
-	return result.Err() == nil
-}
-
-func NewRemotePc(key string, wsConn *websocket.Conn, wsController *WsController) *RemotePC {
-	collection := wsController.db.Collection("pcs")
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	result := collection.FindOne(ctx, bson.M{"key": key})
-
-	if result.Err() != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_, err := collection.InsertOne(ctx, bson.M{"key": key})
-		if err != nil {
-			log.Printf("Failed to create a PC document -- Error: %s\n", err.Error())
-			return nil
-		}
-		log.Printf("Document created for PC %s\n", key)
-	} else {
-		log.Printf("Document exists for PC %s\n", key)
-	}
-
-	return &RemotePC{key: key,
-		conn:       wsConn,
-		controller: wsController,
-		collection: collection,
-	}
 }
 
 func (remotePc *RemotePC) getConn() *websocket.Conn {
 	return remotePc.conn
+}
+
+func NewRemotePc(key string, wsConn *websocket.Conn, wsController *WsController) *RemotePC {
+	return &RemotePC{key: key,
+		conn:       wsConn,
+		controller: wsController,
+	}
 }
 
 func (remotePc *RemotePC) userConnected(user *User) error {
@@ -98,4 +69,48 @@ func (remotePc *RemotePC) disconnectUser() {
 		remotePc.user = nil
 		ClientWriteJSON(remotePc, map[string]interface{}{"type": "info", "code": 0x00, "msg": "User disconnected!"})
 	}
+}
+
+//AuthenticatePC checks if PC exists in the database
+func AuthenticatePC(username, password, key string, db *mongo.Database) bool {
+	collection := db.Collection("pcs")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	result := collection.FindOne(ctx, bson.M{"username": username, "password": password, "key": key})
+
+	return result.Err() == nil
+}
+
+// CreateRemotePC creates a user for the remote pc
+func CreateRemotePC(authData Json, db *mongo.Database) RegisterError {
+	if len(authData) == 3 {
+		if !jsonContainsKeys(authData, []string{"username", "password", "key"}) {
+			return NewRegisterError(http.StatusBadRequest, "invalid request")
+		}
+
+		collection := db.Collection("pcs")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		pcKey := authData["key"].(string)
+
+		if AuthenticatePC(authData["username"].(string), authData["password"].(string), pcKey, db) {
+			//PC already registered
+			log.Printf("PC with key %s already registered!\n", pcKey)
+			return NewRegisterError(http.StatusForbidden, fmt.Sprintf("pc with key %s already registered", pcKey))
+		}
+
+		ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+
+		_, err := collection.InsertOne(ctx, authData)
+		if err != nil {
+			return NewRegisterError(http.StatusInternalServerError, err.Error())
+		}
+
+		return RegisterError{}
+	}
+
+	return NewRegisterError(http.StatusBadRequest, "invalid request")
 }

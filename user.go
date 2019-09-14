@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -49,7 +50,7 @@ type User struct {
 func NewUser(username, password string, pc *RemotePC, db *mongo.Database) *User {
 	collection := db.Collection("users")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	user := collection.FindOne(ctx, bson.M{"username": username, "password": password, "pc_key": pc.key})
@@ -230,4 +231,31 @@ func sanitizeRequestArgs(requestArgs []interface{}) ([]string, ErrorCode) {
 	}
 
 	return sanitizedArgs, 0
+}
+
+func CreateUser(userData Json, remotePcKey string, db *mongo.Database) RegisterError {
+	if !jsonContainsKeys(userData, []string{"username", "password"}) {
+		return NewRegisterError(http.StatusBadRequest, "Invalid arguments")
+	}
+
+	collection := db.Collection("users")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	remotePcKey = strings.TrimSpace(remotePcKey)
+
+	if len(remotePcKey) == 0 {
+		return NewRegisterError(http.StatusBadRequest, "Invalid PC key")
+	}
+
+	userData["pc_key"] = remotePcKey
+	userData["permissions"] = Json{"commands": Json{}}
+
+	_, err := collection.InsertOne(ctx, userData)
+
+	if err != nil {
+		return NewRegisterError(http.StatusInternalServerError, err.Error())
+	}
+
+	return RegisterError{}
 }

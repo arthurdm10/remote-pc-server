@@ -2,18 +2,24 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSuitePC(t *testing.T) {
+
 	client, err := setupMongodb("localhost:27017")
 	assert.Nil(t, err)
+
+	client.Database("test_remote_pc").Drop(context.TODO())
 
 	wsController := NewWsController(client.Database("test_remote_pc"))
 
@@ -74,6 +80,28 @@ func TestSuitePC(t *testing.T) {
 		assert.Nil(t, err)
 		assert.Equal(t, http.StatusForbidden, resp.StatusCode)
 	})
+
+	t.Run("CreateAuthenticatedConnection", func(t *testing.T) {
+		url := "ws" + strings.TrimPrefix(server.URL, "http") + "/connect/" + key
+
+		authHeader := http.Header{"X-Username": []string{"username"}, "X-Password": []string{"passwd"}}
+		wsPcConn, response, err := websocket.DefaultDialer.Dial(url, authHeader)
+		assert.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
+		assert.Nil(t, err)
+
+		defer wsPcConn.Close()
+	})
+
+	t.Run("CreateUnauthenticatedConnectionFail", func(t *testing.T) {
+		url := "ws" + strings.TrimPrefix(server.URL, "http") + "/connect/" + key
+
+		// authHeader := http.Header{"X-Username": []string{"username"}, "X-Password": []string{"passwd"}}
+		_, response, err := websocket.DefaultDialer.Dial(url, nil)
+		assert.Equal(t, http.StatusForbidden, response.StatusCode)
+		assert.NotNil(t, err)
+
+	})
+
 	// t.Run("createNewConnection", func(t *testing.T) {
 	// 	url := "ws" + strings.TrimPrefix(server.URL, "http") + "/create/" + key
 
