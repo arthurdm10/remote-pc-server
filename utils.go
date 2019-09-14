@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"net/http"
 )
 
 func requestBodyToJson(body io.ReadCloser) (map[string]interface{}, error) {
@@ -22,4 +23,8 @@ func jsonContainsKeys(jsonData map[string]interface{}, keys []string) bool {
 	}
 
 	return true
+}
+
+func httpBadRequest(response http.ResponseWriter) {
+	response.WriteHeader(http.StatusBadRequest)
 }

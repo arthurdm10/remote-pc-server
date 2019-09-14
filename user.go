@@ -20,6 +20,7 @@ const (
 	PermissionDenied ErrorCode = 0x0A
 	InvalidArguments ErrorCode = 0x0B
 	InternalError    ErrorCode = 0x0C
+	InvalidCommand   ErrorCode = 0x0D
 )
 
 // check if its a valid request, and return the request type
@@ -96,21 +97,33 @@ func (user *User) readRoutine() {
 				continue
 			}
 
-			requestType, found := jsonData["type"]
+			requestType, ok := jsonData["type"].(string)
 
-			if !found {
+			if !ok {
 				ClientWriteJSON(user.remotePc, jsonData)
 				continue
 			}
 
-			if requestType.(string) == "command" {
-				cmd := jsonData["cmd"].(string)
-				requestArgs := jsonData["args"].([]interface{})
+			if requestType == "command" {
+				cmd, ok := jsonData["cmd"].(string)
+
+				if !ok {
+					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": InvalidCommand, "error_msg": "Invalid command"})
+					continue
+				}
+
+				requestArgs, ok := jsonData["args"].([]interface{})
+
+				if !ok {
+					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": InvalidArguments, "error_msg": "Invalid Arguments"})
+					continue
+				}
+
 				log.Printf("Received command '%s' with args '%v'\n", cmd, requestArgs)
 				sanitizedArgs, errorCode := sanitizeRequestArgs(requestArgs)
 
 				if errorCode != 0 {
-					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": PermissionDenied, "error_msg": "Error"})
+					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": errorCode, "error_msg": "Error"})
 				}
 
 				if len(sanitizedArgs) != len(requestArgs) {
@@ -124,12 +137,12 @@ func (user *User) readRoutine() {
 					continue
 				}
 
-				jsonData["args"] = sanitizedArgs
 				ClientWriteJSON(user.remotePc, jsonData)
 			}
-		} else if msgType == websocket.BinaryMessage {
-			ClientWrite(user.remotePc, msgType, data)
+
+			continue
 		}
+		ClientWrite(user.remotePc, msgType, data)
 	}
 }
 
@@ -206,16 +219,10 @@ func sanitizeRequestArgs(requestArgs []interface{}) ([]string, ErrorCode) {
 		if !ok {
 			// // argument must be a string
 			log.Printf("Invalid argument '%v' of type '%T'. It must be a string\n", arg, arg)
-			return nil, InvalidArguments
+			sanitizedArgs[i] = strArg
+			continue
 		}
-		//(^\.\.)|(^\.\/)|(\/\.\.)|(\/\.[^a-z])
-		// re, err := regexp.Compile(`(^\.\.)|(^\.)|(\/\.\.)|(\/\.[^a-zA-Z])`)
 
-		// if err != nil {
-		// 	return nil, InternalError
-		// }
-
-		// strArg = string(re.ReplaceAll([]byte(arg.(string)), []byte("")))
 		strArg = strings.ReplaceAll(strArg, `../`, "")
 		strArg = strings.ReplaceAll(strArg, `./`, "")
 

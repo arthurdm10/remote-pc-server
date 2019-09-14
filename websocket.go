@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -24,18 +24,18 @@ var upgrader = websocket.Upgrader{
 // WsController its just to keep track of connected PCs
 type WsController struct {
 	remotePcs        map[string]*RemotePC
-	mapMutex         sync.Mutex
-	disconnectPcChan chan string
-	mongoClient      *mongo.Client
+	disconnectPcChan chan string //will be used to remove/disconnect remote PCs
 	db               *mongo.Database
 }
 
-/// NewWsController creates a new websocket controller
+// NewWsController creates a new websocket controller
 func NewWsController(db *mongo.Database) *WsController {
 
-	return &WsController{remotePcs: make(map[string]*RemotePC),
+	return &WsController{
+		remotePcs:        make(map[string]*RemotePC),
 		disconnectPcChan: make(chan string),
-		db:               db}
+		db:               db,
+	}
 }
 
 /**
@@ -50,22 +50,17 @@ func (wsController *WsController) registerRemotePc() http.HandlerFunc {
 		pcAuthData, err := requestBodyToJson(req.Body)
 		if err != nil {
 			log.Printf("Failed to parse pc auth data -- %s\n", err.Error())
-			response.WriteHeader(http.StatusInternalServerError)
+			httpBadRequest(response)
 			return
 		}
-
 		if len(pcAuthData) == 3 {
-
-			for dataKey := range pcAuthData {
-				if !jsonContainsKeys(pcAuthData, []string{"username", "password", "key"}) {
-					log.Printf("Invalid data key: %s\n", dataKey)
-					response.WriteHeader(http.StatusBadRequest)
-					return
-				}
+			if !jsonContainsKeys(pcAuthData, []string{"username", "password", "key"}) {
+				httpBadRequest(response)
+				return
 			}
 
 			collection := wsController.db.Collection("pcs")
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 
 			result := collection.FindOne(ctx, bson.M{"key": pcAuthData["key"]})
@@ -76,7 +71,7 @@ func (wsController *WsController) registerRemotePc() http.HandlerFunc {
 				return
 			}
 
-			ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
+			ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 
 			collection.InsertOne(ctx, pcAuthData)
@@ -84,7 +79,7 @@ func (wsController *WsController) registerRemotePc() http.HandlerFunc {
 			return
 		}
 
-		response.WriteHeader(http.StatusBadRequest)
+		httpBadRequest(response)
 	}
 }
 
@@ -102,9 +97,10 @@ func (wsController *WsController) newRemotePcConnection() http.HandlerFunc {
 				go remotePc.readRoutine()
 				return
 			}
+			log.Printf("Failed to upgrade websocket connection\nError: %s\n", err.error(0))
 		}
 
-		w.WriteHeader(http.StatusBadRequest)
+		w.WriteHeader(http.StatusInternalServerError)
 	}
 }
 
@@ -128,7 +124,7 @@ func (wsController *WsController) newUserConnection() http.HandlerFunc {
 		if remotePc, found := wsController.remotePcs[remotePcKey]; found {
 			if remotePc.user != nil {
 				// PC already have a user connected
-				response.WriteHeader(http.StatusBadRequest)
+				httpBadRequest(response)
 				return
 			}
 
@@ -136,9 +132,7 @@ func (wsController *WsController) newUserConnection() http.HandlerFunc {
 
 			if user == nil {
 				response.WriteHeader(http.StatusUnauthorized)
-				return
 			}
-
 			wsConn, err := upgrader.Upgrade(response, req, nil)
 			if ok(err) {
 				user.wsConn = wsConn
@@ -148,7 +142,7 @@ func (wsController *WsController) newUserConnection() http.HandlerFunc {
 				return
 			}
 
-			log.Printf("Failed to upgrade websocket connection. Error: %s\n", err.Error())
+			log.Printf("Failed to upgrade websocket connection\nError: %s\n", err.Error())
 		}
 		log.Printf("User tryied to connect to %s", remotePcKey)
 		response.WriteHeader(http.StatusNotFound)
@@ -157,22 +151,34 @@ func (wsController *WsController) newUserConnection() http.HandlerFunc {
 
 func (wsController *WsController) createUser() http.HandlerFunc {
 	return func(response http.ResponseWriter, req *http.Request) {
-		remotePcKey := mux.Vars(req)["key"]
 
 		userData, err := requestBodyToJson(req.Body)
 
 		if err != nil {
-			log.Printf("Failed to parse user data -- %s\n", err.Error())
-			response.WriteHeader(http.StatusInternalServerError)
+			log.Printf("Failed to parse user data\nError:%s\n", err.Error())
+			httpBadRequest(response)
+			return
+		}
+
+		if !jsonContainsKeys(userData, []string{"username", "password"}) {
+			httpBadRequest(response)
 			return
 		}
 
 		collection := wsController.db.Collection("users")
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
+		remotePcKey := strings.TrimSpace(mux.Vars(req)["key"])
+
+		if len(remotePcKey) == 0 {
+			httpBadRequest(response)
+			return
+		}
+
 		userData["pc_key"] = remotePcKey
-		userData["permissions"] = map[string]interface{}{"commands": map[string]interface{}{}}
+		userData["permissions"] = Json{"commands": Json{}}
+
 		_, err = collection.InsertOne(ctx, userData)
 
 		if err != nil {
@@ -202,17 +208,18 @@ func (wsController *WsController) setUserPermissions() http.HandlerFunc {
 		jsonData, err := requestBodyToJson(req.Body)
 
 		if err != nil {
-			response.WriteHeader(http.StatusInternalServerError)
+			httpBadRequest(response)
 			return
 		}
 
 		if !jsonContainsKeys(jsonData, []string{"username", "permissions"}) {
-			response.WriteHeader(http.StatusBadRequest)
+			httpBadRequest(response)
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
+
 		user := wsController.db.Collection("users").FindOneAndUpdate(ctx,
 			bson.M{"username": jsonData["username"]},
 			bson.M{"$set": bson.M{"permissions": jsonData["permissions"]}})
@@ -230,16 +237,17 @@ func (wsController *WsController) remotePcOnly(handler http.HandlerFunc) http.Ha
 	return func(response http.ResponseWriter, req *http.Request) {
 		remotePcKey := mux.Vars(req)["key"]
 
-		username := req.Header.Get(http.CanonicalHeaderKey("x-username"))
-		password := req.Header.Get(http.CanonicalHeaderKey("x-password"))
+		username := strings.TrimSpace(req.Header.Get(http.CanonicalHeaderKey("x-username")))
+		password := strings.TrimSpace(req.Header.Get(http.CanonicalHeaderKey("x-password")))
 
 		if len(username) == 0 || len(password) == 0 {
-			response.WriteHeader(http.StatusBadRequest)
+			httpBadRequest(response)
 			return
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
+
 		pc := wsController.db.Collection("pcs").FindOne(ctx, bson.M{"key": remotePcKey, "username": username, "password": password})
 		if pc.Err() != nil {
 			response.WriteHeader(http.StatusForbidden)
