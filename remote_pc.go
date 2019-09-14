@@ -48,13 +48,7 @@ func (remotePc *RemotePC) readRoutine() {
 		if err != nil {
 			break
 		}
-		// if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived, websocket.CloseServiceRestart) {
-		// 	break
-		// }
 
-		if remotePc.user == nil {
-			continue
-		}
 		ClientWrite(remotePc.user, msgType, data)
 	}
 

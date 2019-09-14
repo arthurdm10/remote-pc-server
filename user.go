@@ -46,6 +46,10 @@ type User struct {
 	permissions Json
 }
 
+func (user *User) getConn() *websocket.Conn {
+	return user.wsConn
+}
+
 // NewUser returns a user only if it exists
 func NewUser(username, password string, pc *RemotePC, db *mongo.Database) *User {
 	collection := db.Collection("users")
@@ -72,8 +76,32 @@ func NewUser(username, password string, pc *RemotePC, db *mongo.Database) *User 
 	return &User{username: username, remotePc: pc, collection: collection, userDoc: doc, permissions: permissions["commands"].(Json)}
 }
 
-func (user *User) getConn() *websocket.Conn {
-	return user.wsConn
+//CreateUser registers a new user for the remote PC
+func CreateUser(userData Json, remotePcKey string, db *mongo.Database) RegisterError {
+	if !jsonContainsKeys(userData, []string{"username", "password"}) {
+		return NewRegisterError(http.StatusBadRequest, "Invalid arguments")
+	}
+
+	collection := db.Collection("users")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	remotePcKey = strings.TrimSpace(remotePcKey)
+
+	if len(remotePcKey) == 0 {
+		return NewRegisterError(http.StatusBadRequest, "Invalid PC key")
+	}
+
+	userData["pc_key"] = remotePcKey
+	userData["permissions"] = Json{"commands": Json{}}
+
+	_, err := collection.InsertOne(ctx, userData)
+
+	if err != nil {
+		return NewRegisterError(http.StatusInternalServerError, err.Error())
+	}
+
+	return RegisterError{}
 }
 
 func (user *User) readRoutine() {
@@ -86,8 +114,6 @@ func (user *User) readRoutine() {
 		if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
 			break
 		}
-
-		// ClientWrite(user.remotePc, msgType, data)
 
 		if msgType == websocket.TextMessage {
 			var jsonData Json
@@ -109,14 +135,14 @@ func (user *User) readRoutine() {
 				cmd, ok := jsonData["cmd"].(string)
 
 				if !ok {
-					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": InvalidCommand, "error_msg": "Invalid command"})
+					user.sendCmdResponseError(cmd, "Invalid command", InvalidCommand)
 					continue
 				}
 
 				requestArgs, ok := jsonData["args"].([]interface{})
 
 				if !ok {
-					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": InvalidArguments, "error_msg": "Invalid Arguments"})
+					user.sendCmdResponseError(cmd, "Invalid arguments", InvalidArguments)
 					continue
 				}
 
@@ -124,7 +150,7 @@ func (user *User) readRoutine() {
 				sanitizedArgs, errorCode := sanitizeRequestArgs(requestArgs)
 
 				if errorCode != 0 {
-					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": errorCode, "error_msg": "Error"})
+					user.sendCmdResponseError(cmd, "Error", errorCode)
 				}
 
 				if len(sanitizedArgs) != len(requestArgs) {
@@ -132,26 +158,26 @@ func (user *User) readRoutine() {
 				}
 
 				jsonData["args"] = sanitizedArgs
-				if !user.havePermission(cmd, jsonData["args"].([]string)) {
+				if !user.havePermission(cmd, jsonData["args"].([]interface{})) {
 					log.Printf("user doesnt have permission to use command %s with args %s\n", cmd, jsonData["args"])
-					ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": PermissionDenied, "error_msg": "Permission denied"})
+					user.sendCmdResponseError(cmd, "Permission Denied", PermissionDenied)
 					continue
 				}
-
-				ClientWriteJSON(user.remotePc, jsonData)
 			}
 
+			ClientWriteJSON(user.remotePc, jsonData)
 			continue
 		}
 		ClientWrite(user.remotePc, msgType, data)
 	}
 }
 
-func (user *User) havePermission(cmd string, args []string) bool {
+func (user *User) havePermission(cmd string, args []interface{}) bool {
 	if len(user.permissions) == 0 {
 		// user have all permissions
 		return true
 	}
+
 	if _, found := user.permissions[cmd]; found {
 		permission := user.permissions[cmd].(Json)
 		restrictions := permission["restrictions"].(bson.A)
@@ -165,7 +191,13 @@ func (user *User) havePermission(cmd string, args []string) bool {
 		isFileCommand := cmd != "ls_dir"
 
 		if len(restrictions) > 0 {
-			for _, arg := range args {
+			for _, requestArg := range args {
+				arg, ok := requestArg.(string)
+
+				if !ok {
+					continue
+				}
+
 				for _, res := range restrictions {
 					restriction := res.(Json)
 					restrictionPath := restriction["path"].(string)
@@ -213,49 +245,26 @@ func (user *User) havePermission(cmd string, args []string) bool {
 	return true
 }
 
-func sanitizeRequestArgs(requestArgs []interface{}) ([]string, ErrorCode) {
-	sanitizedArgs := make([]string, len(requestArgs))
+func sanitizeRequestArgs(requestArgs []interface{}) ([]interface{}, ErrorCode) {
+	// sanitizedArgs := make([]string, len(requestArgs))
 	for i, arg := range requestArgs {
 		strArg, ok := arg.(string)
 		if !ok {
 			// // argument must be a string
-			log.Printf("Invalid argument '%v' of type '%T'. It must be a string\n", arg, arg)
-			sanitizedArgs[i] = strArg
 			continue
 		}
 
 		strArg = strings.ReplaceAll(strArg, `../`, "")
 		strArg = strings.ReplaceAll(strArg, `./`, "")
 
-		sanitizedArgs[i] = filepath.Clean(strArg)
+		if len(strArg) > 0 {
+			requestArgs[i] = filepath.Clean(strArg)
+		}
 	}
 
-	return sanitizedArgs, 0
+	return requestArgs, 0
 }
 
-func CreateUser(userData Json, remotePcKey string, db *mongo.Database) RegisterError {
-	if !jsonContainsKeys(userData, []string{"username", "password"}) {
-		return NewRegisterError(http.StatusBadRequest, "Invalid arguments")
-	}
-
-	collection := db.Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	remotePcKey = strings.TrimSpace(remotePcKey)
-
-	if len(remotePcKey) == 0 {
-		return NewRegisterError(http.StatusBadRequest, "Invalid PC key")
-	}
-
-	userData["pc_key"] = remotePcKey
-	userData["permissions"] = Json{"commands": Json{}}
-
-	_, err := collection.InsertOne(ctx, userData)
-
-	if err != nil {
-		return NewRegisterError(http.StatusInternalServerError, err.Error())
-	}
-
-	return RegisterError{}
+func (user *User) sendCmdResponseError(cmd, errorMsg string, errorCode ErrorCode) {
+	ClientWriteJSON(user, Json{"cmd_response": cmd, "error_code": errorCode, "error_msg": errorMsg})
 }
