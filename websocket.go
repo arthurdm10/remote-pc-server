@@ -24,18 +24,33 @@ var upgrader = websocket.Upgrader{
 // WsController its just to keep track of connected PCs
 type WsController struct {
 	remotePcs        map[string]*RemotePC
+	adminUsername    string
+	adminPassword    string
 	disconnectPcChan chan string //will be used to remove/disconnect remote PCs
 	db               *mongo.Database
 }
 
 // NewWsController creates a new websocket controller
-func NewWsController(db *mongo.Database) *WsController {
+func NewWsController(adminUsername, adminPassword string, db *mongo.Database) *WsController {
 
 	return &WsController{
-		remotePcs:        make(map[string]*RemotePC),
-		disconnectPcChan: make(chan string),
-		db:               db,
+		make(map[string]*RemotePC),
+		adminUsername,
+		adminPassword,
+		make(chan string),
+		db,
 	}
+}
+
+func (wsController *WsController) routes() *mux.Router {
+	router := mux.NewRouter()
+
+	router.HandleFunc("/create_pc", wsController.registerRemotePc())                                            // create new PC
+	router.HandleFunc("/connect/{key}", wsController.adminOnly(wsController.newRemotePcConnection()))           // PC connected
+	router.HandleFunc("/access/{key}", wsController.newUserConnection())                                        // user connect to a PC
+	router.HandleFunc("/create_user/{key}", wsController.adminOnly(wsController.createUser()))                  // create a new user
+	router.HandleFunc("/set_user_permissions/{key}", wsController.adminOnly(wsController.setUserPermissions())) // create a new user
+	return router
 }
 
 /**
@@ -197,7 +212,7 @@ func (wsController *WsController) setUserPermissions() http.HandlerFunc {
 	}
 }
 
-func (wsController *WsController) remotePcOnly(handler http.HandlerFunc) http.HandlerFunc {
+func (wsController *WsController) adminOnly(handler http.HandlerFunc) http.HandlerFunc {
 	return func(response http.ResponseWriter, req *http.Request) {
 		remotePcKey := strings.TrimSpace(mux.Vars(req)["key"])
 
@@ -207,8 +222,7 @@ func (wsController *WsController) remotePcOnly(handler http.HandlerFunc) http.Ha
 		if len(username) == 0 ||
 			len(password) == 0 ||
 			len(remotePcKey) == 0 ||
-			!AuthenticatePC(username, password, remotePcKey, wsController.db) {
-
+			(username != wsController.adminUsername && password != wsController.adminPassword) {
 			response.WriteHeader(http.StatusForbidden)
 			return
 		}

@@ -9,34 +9,33 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestSuitePC(t *testing.T) {
 
+	const (
+		key           = "fc58161e6b0da8e0cae8248f40141165"
+		adminUser     = "username"
+		adminPassword = "passwd"
+	)
+
 	client, err := setupMongodb("localhost:27017")
 	assert.Nil(t, err)
 
 	client.Database("test_remote_pc").Drop(context.TODO())
 
-	wsController := NewWsController(client.Database("test_remote_pc"))
+	wsController := NewWsController(adminUser, adminPassword, client.Database("test_remote_pc"))
 
-	const (
-		key        = "fc58161e6b0da8e0cae8248f40141165"
-		pcUsername = "username"
-		pcPassword = "passwd"
-	)
+	// router := mux.NewRouter()
+	// router.HandleFunc("/create_pc", wsController.registerRemotePc())                                               // create new PC
+	// router.HandleFunc("/connect/{key}", wsController.remotePcOnly(wsController.newRemotePcConnection()))           // PC connected
+	// router.HandleFunc("/access/{key}", wsController.newUserConnection())                                           // user connect to a PC
+	// router.HandleFunc("/create_user/{key}", wsController.remotePcOnly(wsController.createUser()))                  // create a new user
+	// router.HandleFunc("/set_user_permissions/{key}", wsController.remotePcOnly(wsController.setUserPermissions())) // create a new user
 
-	router := mux.NewRouter()
-	router.HandleFunc("/create_pc", wsController.registerRemotePc())                                               // create new PC
-	router.HandleFunc("/connect/{key}", wsController.remotePcOnly(wsController.newRemotePcConnection()))           // PC connected
-	router.HandleFunc("/access/{key}", wsController.newUserConnection())                                           // user connect to a PC
-	router.HandleFunc("/create_user/{key}", wsController.remotePcOnly(wsController.createUser()))                  // create a new user
-	router.HandleFunc("/set_user_permissions/{key}", wsController.remotePcOnly(wsController.setUserPermissions())) // create a new user
-
-	server := httptest.NewServer(router)
+	server := httptest.NewServer(wsController.routes())
 	defer server.Close()
 
 	t.Run("RegisterNewPC", func(t *testing.T) {
@@ -46,7 +45,7 @@ func TestSuitePC(t *testing.T) {
 			"username": "%s",
 			"password": "%s",
 			"key": "%s"
-		}`, pcUsername, pcPassword, key))
+		}`, adminUser, adminPassword, key))
 
 		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
 		req.Header.Set("Content-Type", "application/json")
@@ -67,7 +66,7 @@ func TestSuitePC(t *testing.T) {
 			"username": "%s",
 			"password": "%s",
 			"key": "%s"
-			}`, pcUsername, pcPassword, key))
+			}`, adminUser, adminPassword, key))
 
 		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonStr))
 		req.Header.Set("Content-Type", "application/json")

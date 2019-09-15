@@ -14,7 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 
-	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 )
@@ -68,13 +67,13 @@ func TestSuiteUser(t *testing.T) {
 
 	beforeAll(db)
 
-	wsController := NewWsController(db)
+	wsController := NewWsController("test", "test", db)
 
-	router := mux.NewRouter()
-	router.HandleFunc("/connect/{key}", wsController.remotePcOnly(wsController.newRemotePcConnection())) // PC connected
-	router.HandleFunc("/access/{key}", wsController.newUserConnection())                                 // user connect to a PC
+	// router := mux.NewRouter()
+	// router.HandleFunc("/connect/{key}", wsController.remotePcOnly(wsController.newRemotePcConnection())) // PC connected
+	// router.HandleFunc("/access/{key}", wsController.newUserConnection())                                 // user connect to a PC
 
-	server := httptest.NewServer(router)
+	server := httptest.NewServer(wsController.routes())
 	defer server.Close()
 
 	createRemotePcURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/connect/" + key
