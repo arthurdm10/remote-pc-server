@@ -14,8 +14,8 @@ func loadEnvVars() (string, string, string, string) {
 	mongoDbHost, found := os.LookupEnv("MONGODB_HOST")
 
 	if !found {
-		log.Printf("MONGODB_HOST environment variable not found, using default (localhost:27017)")
-		mongoDbHost = "localhost:27017"
+		log.Printf("MONGODB_HOST environment variable not found, using default (mongo:27017)")
+		mongoDbHost = "mongo:27017"
 	} else {
 		re := regexp.MustCompile(`(^[a-zA-z0-9\.]+:\d+)`)
 		if !re.Match([]byte(mongoDbHost)) {
