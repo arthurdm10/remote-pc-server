@@ -1,0 +1,39 @@
+{
+  "username": "username",
+  "permissions": {
+    "commands": {
+      "ls_dir": {
+        "allow": true,
+        "restrictions": [
+          {
+            "path": "/etc",
+            "allow": false
+          }
+        ]
+      },
+      "donwload_file": {
+        "allow": true,
+        "restrictions": [
+          {
+            "path": "/var",
+            "allow": false,
+            "allow_subdir": true
+          }
+        ]
+      },
+      "delete_file": {
+        "allow": false,
+        "restrictions": [
+          {
+            "path": "/home",
+            "allow": true,
+            "allow_subdir": true
+          }
+        ]
+      },
+      "screenshot": {
+        "allow": false
+      }
+    }
+  }
+}

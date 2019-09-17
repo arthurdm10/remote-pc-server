@@ -1,26 +1,68 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"math/rand"
 	"net/http"
-	"time"
-
-	"github.com/gorilla/mux"
+	"os"
+	"regexp"
 )
 
+type Json = map[string]interface{}
+
+func loadEnvVars() (string, string, string, string) {
+	mongoDbHost, found := os.LookupEnv("MONGODB_HOST")
+
+	if !found {
+		log.Printf("MONGODB_HOST environment variable not found, using default (localhost:27017)")
+		mongoDbHost = "localhost:27017"
+	} else {
+		re := regexp.MustCompile(`(^[a-zA-z0-9\.]+:\d+)`)
+		if !re.Match([]byte(mongoDbHost)) {
+			log.Printf("Invalid mongodb host: %s\n", mongoDbHost)
+			os.Exit(1)
+		}
+	}
+
+	port, found := os.LookupEnv("PORT")
+	if !found {
+		log.Printf("PORT environment variable not found, using default (9002)")
+		port = "9002"
+	} else {
+		re := regexp.MustCompile(`\d+`)
+		if !re.Match([]byte(port)) {
+			log.Printf("Invalid port: %s\n", port)
+			os.Exit(1)
+		}
+	}
+
+	/*Admin username and password will be used
+	to register a remote PC and users that will access this PC*/
+	adminUser, found := os.LookupEnv("ADMIN_USER")
+	if !found {
+		log.Printf("Required ADMIN_USER environment variable not found")
+		os.Exit(1)
+	}
+
+	adminPassword, found := os.LookupEnv("ADMIN_PASSWORD")
+	if !found {
+		log.Printf("Required ADMIN_PASSWORD environment variable not found")
+		os.Exit(1)
+	}
+
+	return mongoDbHost, port, adminUser, adminPassword
+}
+
 func main() {
-	wsController := WsController{remotePcs: make(map[string]*RemotePC), disconnectPcChan: make(chan string)}
 
-	rand.Seed(time.Now().UnixNano())
+	mongoDbHost, port, adminUsername, adminPassword := loadEnvVars()
 
-	router := mux.NewRouter()
+	wsController := NewWsController(adminUsername, adminPassword, mongoDbHost, "remote_pc")
 
-	router.HandleFunc("/create/{key}", wsController.newPcHandler)   // new PC connected
-	router.HandleFunc("/access/{key}", wsController.newUserHandler) // user connect to a PC
+	http.Handle("/", wsController.routes())
 
-	http.Handle("/", router)
-	go wsController.disconnectPC()
+	go wsController.disconnectPCRoutine()
 
-	log.Fatal(http.ListenAndServe(":9002", nil))
+	fmt.Println("Listening on port: " + port)
+	http.ListenAndServe(":"+port, nil)
 }
