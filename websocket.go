@@ -12,6 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 func ok(err error) bool { return err == nil }
@@ -31,35 +33,50 @@ type WsController struct {
 }
 
 // NewWsController creates a new websocket controller
-func NewWsController(adminUsername, adminPassword string, db *mongo.Database) *WsController {
+func NewWsController(adminUsername, adminPassword, mongoDbHost, dbName string) *WsController {
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://"+mongoDbHost))
+	defer cancel()
+
+	if err != nil {
+		panic(err.Error())
+	}
+
+	// check if its connected
+	ctx, cancel = context.WithTimeout(context.Background(), 4*time.Second)
+	err = client.Ping(ctx, readpref.Primary())
+	defer cancel()
+
+	if err != nil {
+		panic("Failed to connect to mongodb host: " + mongoDbHost)
+	}
 
 	return &WsController{
 		make(map[string]*RemotePC),
 		adminUsername,
 		adminPassword,
 		make(chan string),
-		db,
+		client.Database(dbName),
 	}
 }
 
 func (wsController *WsController) routes() *mux.Router {
 	router := mux.NewRouter()
 
-	router.HandleFunc("/create_pc", wsController.registerRemotePc())                                            // create new PC
-	router.HandleFunc("/connect/{key}", wsController.adminOnly(wsController.newRemotePcConnection()))           // PC connected
+	router.HandleFunc("/create_pc/{key}", wsController.adminOnly(wsController.registerRemotePc()))              // create new PC
+	router.HandleFunc("/connect/{key}", wsController.newRemotePcConnection())                                   // PC connected
 	router.HandleFunc("/access/{key}", wsController.newUserConnection())                                        // user connect to a PC
 	router.HandleFunc("/create_user/{key}", wsController.adminOnly(wsController.createUser()))                  // create a new user
-	router.HandleFunc("/set_user_permissions/{key}", wsController.adminOnly(wsController.setUserPermissions())) // create a new user
+	router.HandleFunc("/set_user_permissions/{key}", wsController.adminOnly(wsController.setUserPermissions())) // set user permissions
 	return router
 }
 
-/**
-Handles a new PC connection
-If the key doesnt already exists, create a new PC instance and add to controller
+/* Handles a new PC connection
 
-TODO: Create a key validation
+Register a new PC with username, password and a key
 */
-/// Register a new PC with username, password and a key
+
 func (wsController *WsController) registerRemotePc() http.HandlerFunc {
 	return func(response http.ResponseWriter, req *http.Request) {
 		pcAuthData, err := requestBodyToJson(req.Body)
@@ -68,10 +85,16 @@ func (wsController *WsController) registerRemotePc() http.HandlerFunc {
 			httpBadRequest(response)
 			return
 		}
-
-		if regError := CreateRemotePC(pcAuthData, wsController.db); regError.httpStatusResponse != 0 {
-			log.Printf("Failed to create remote PC\nError: %s\n", regError.Error())
-			response.WriteHeader(regError.httpStatusResponse)
+		regErr := CreateRemotePC(pcAuthData, wsController.db)
+		if regErr.httpStatusResponse != 0 {
+			log.Printf("Failed to create remote PC\nError: %s\n", regErr.Error())
+			jsonError, err := regErr.ToJsonString()
+			if err != nil {
+				response.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			response.WriteHeader(regErr.httpStatusResponse)
+			response.Write(jsonError)
 			return
 		}
 
@@ -82,6 +105,12 @@ func (wsController *WsController) registerRemotePc() http.HandlerFunc {
 func (wsController *WsController) newRemotePcConnection() http.HandlerFunc {
 	return func(response http.ResponseWriter, req *http.Request) {
 		remotePcKey := mux.Vars(req)["key"]
+		username, password := getAuthHeaders(req)
+
+		if !AuthenticatePC(username, password, remotePcKey, wsController.db) {
+			response.WriteHeader(http.StatusForbidden)
+			return
+		}
 
 		// check if the key already exists
 		if _, found := wsController.remotePcs[remotePcKey]; !found {
@@ -102,15 +131,12 @@ func (wsController *WsController) newRemotePcConnection() http.HandlerFunc {
 
 /**
 Handles a new User connection
-
-TODO: Create a key validation
 */
 func (wsController *WsController) newUserConnection() http.HandlerFunc {
 	return func(response http.ResponseWriter, req *http.Request) {
 		remotePcKey := mux.Vars(req)["key"]
 
-		username := req.Header.Get(http.CanonicalHeaderKey("x-username"))
-		password := req.Header.Get(http.CanonicalHeaderKey("x-password"))
+		username, password := getAuthHeaders(req)
 
 		if len(username) == 0 || len(password) == 0 {
 			response.WriteHeader(http.StatusUnauthorized)
@@ -129,7 +155,9 @@ func (wsController *WsController) newUserConnection() http.HandlerFunc {
 
 			if user == nil {
 				response.WriteHeader(http.StatusUnauthorized)
+				return
 			}
+
 			wsConn, err := upgrader.Upgrade(response, req, nil)
 			if ok(err) {
 				user.wsConn = wsConn
@@ -160,8 +188,14 @@ func (wsController *WsController) createUser() http.HandlerFunc {
 		regErr := CreateUser(userData, mux.Vars(req)["key"], wsController.db)
 
 		if regErr.httpStatusResponse != 0 {
-			log.Printf("Failed to create user\nError: %s", err.Error())
+			log.Printf("Failed to create user\nError: %s", regErr.Error())
+			jsonError, err := regErr.ToJsonString()
+			if err != nil {
+				response.WriteHeader(http.StatusInternalServerError)
+				return
+			}
 			response.WriteHeader(regErr.httpStatusResponse)
+			response.Write(jsonError)
 			return
 		}
 
@@ -169,7 +203,7 @@ func (wsController *WsController) createUser() http.HandlerFunc {
 	}
 }
 
-func (wsController *WsController) disconnectPC() {
+func (wsController *WsController) disconnectPCRoutine() {
 	defer close(wsController.disconnectPcChan)
 	for {
 		pcKey := <-wsController.disconnectPcChan
@@ -187,11 +221,13 @@ func (wsController *WsController) setUserPermissions() http.HandlerFunc {
 		jsonData, err := requestBodyToJson(req.Body)
 
 		if err != nil {
+			log.Printf("Error parsing json - %s", err.Error())
 			httpBadRequest(response)
 			return
 		}
 
 		if !jsonContainsKeys(jsonData, []string{"username", "permissions"}) {
+			log.Printf("Invalid request - missing username/permissions keys in JSON")
 			httpBadRequest(response)
 			return
 		}
@@ -216,9 +252,7 @@ func (wsController *WsController) adminOnly(handler http.HandlerFunc) http.Handl
 	return func(response http.ResponseWriter, req *http.Request) {
 		remotePcKey := strings.TrimSpace(mux.Vars(req)["key"])
 
-		username := strings.TrimSpace(req.Header.Get(http.CanonicalHeaderKey("x-username")))
-		password := strings.TrimSpace(req.Header.Get(http.CanonicalHeaderKey("x-password")))
-
+		username, password := getAuthHeaders(req)
 		if len(username) == 0 ||
 			len(password) == 0 ||
 			len(remotePcKey) == 0 ||

@@ -26,16 +26,9 @@ func TestSuitePC(t *testing.T) {
 
 	client.Database("test_remote_pc").Drop(context.TODO())
 
-	wsController := NewWsController(adminUser, adminPassword, client.Database("test_remote_pc"))
-
-	// router := mux.NewRouter()
-	// router.HandleFunc("/create_pc", wsController.registerRemotePc())                                               // create new PC
-	// router.HandleFunc("/connect/{key}", wsController.remotePcOnly(wsController.newRemotePcConnection()))           // PC connected
-	// router.HandleFunc("/access/{key}", wsController.newUserConnection())                                           // user connect to a PC
-	// router.HandleFunc("/create_user/{key}", wsController.remotePcOnly(wsController.createUser()))                  // create a new user
-	// router.HandleFunc("/set_user_permissions/{key}", wsController.remotePcOnly(wsController.setUserPermissions())) // create a new user
-
+	wsController := NewWsController(adminUser, adminPassword, "localhost:27017", "test_remote_pc")
 	server := httptest.NewServer(wsController.routes())
+
 	defer server.Close()
 
 	t.Run("RegisterNewPC", func(t *testing.T) {

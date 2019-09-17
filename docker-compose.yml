@@ -1,0 +1,18 @@
+version: '3'
+
+services:
+  mongo:
+    image: 'mongo:3.4-xenial'
+    expose:
+      - '27017'
+
+  remote-pc-server:
+    build: .
+    ports:
+      - '9002:9002'
+    environment:
+      - ADMIN_USER
+      - ADMIN_PASSWORD
+      - MONGODB_HOST
+    depends_on:
+      - mongo

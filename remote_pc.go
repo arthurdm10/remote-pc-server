@@ -92,7 +92,7 @@ func CreateRemotePC(authData Json, db *mongo.Database) RegisterError {
 		if AuthenticatePC(authData["username"].(string), authData["password"].(string), pcKey, db) {
 			//PC already registered
 			log.Printf("PC with key %s already registered!\n", pcKey)
-			return NewRegisterError(http.StatusForbidden, fmt.Sprintf("pc with key %s already registered", pcKey))
+			return NewRegisterError(http.StatusBadRequest, fmt.Sprintf("PC with key %s already registered", pcKey))
 		}
 
 		ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)

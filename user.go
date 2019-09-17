@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -83,13 +84,30 @@ func CreateUser(userData Json, remotePcKey string, db *mongo.Database) RegisterE
 	}
 
 	collection := db.Collection("users")
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
 
 	remotePcKey = strings.TrimSpace(remotePcKey)
 
 	if len(remotePcKey) == 0 {
 		return NewRegisterError(http.StatusBadRequest, "Invalid PC key")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	//check if a PC with this key exists
+	findResult := db.Collection("pcs").FindOne(ctx, bson.M{"key": remotePcKey})
+	if findResult.Err() != nil {
+		return NewRegisterError(http.StatusNotFound, fmt.Sprintf("Could not find a PC with key '%s'", remotePcKey))
+	}
+
+	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	findResult = collection.FindOne(ctx, bson.M{"username": userData["username"], "pc_key": remotePcKey})
+
+	if findResult.Err() == nil {
+		//username already exists
+		return NewRegisterError(http.StatusBadRequest, fmt.Sprintf("Username '%s' already exists", userData["username"]))
 	}
 
 	userData["pc_key"] = remotePcKey
@@ -111,8 +129,13 @@ func (user *User) readRoutine() {
 
 		msgType, data, err := user.wsConn.ReadMessage()
 
-		if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
-			break
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure, websocket.CloseNoStatusReceived) {
+				log.Printf("User disconnected from PC %s", user.remotePc.key)
+				break
+			}
+			log.Printf("Unknown error on user readRountine - %s", err.Error())
+			return
 		}
 
 		if msgType == websocket.TextMessage {
@@ -132,6 +155,12 @@ func (user *User) readRoutine() {
 			}
 
 			if requestType == "command" {
+
+				if !jsonContainsKeys(jsonData, []string{"cmd", "args"}) {
+					ClientWriteJSON(user, Json{"error": "Invalid request"})
+					continue
+				}
+
 				cmd, ok := jsonData["cmd"].(string)
 
 				if !ok {
@@ -159,7 +188,7 @@ func (user *User) readRoutine() {
 
 				jsonData["args"] = sanitizedArgs
 				if !user.havePermission(cmd, jsonData["args"].([]interface{})) {
-					log.Printf("user doesnt have permission to use command %s with args %s\n", cmd, jsonData["args"])
+					log.Printf("User doesnt have permission to use command %s with args %s\n", cmd, jsonData["args"])
 					user.sendCmdResponseError(cmd, "Permission Denied", PermissionDenied)
 					continue
 				}
@@ -173,8 +202,8 @@ func (user *User) readRoutine() {
 }
 
 func (user *User) havePermission(cmd string, args []interface{}) bool {
+	// user have all permissions
 	if len(user.permissions) == 0 {
-		// user have all permissions
 		return true
 	}
 
@@ -186,15 +215,15 @@ func (user *User) havePermission(cmd string, args []interface{}) bool {
 			return false
 		}
 
-		// log.Printf("User permissions: %s", permission)
-
-		isFileCommand := cmd != "ls_dir"
+		// any command that interact with a file (download, delete etc...)
 
 		if len(restrictions) > 0 {
+			isFileCommand := cmd != "ls_dir"
 			for _, requestArg := range args {
 				arg, ok := requestArg.(string)
 
 				if !ok {
+					// if its not a string, just ignore it
 					continue
 				}
 
@@ -203,30 +232,24 @@ func (user *User) havePermission(cmd string, args []interface{}) bool {
 					restrictionPath := restriction["path"].(string)
 
 					if isFileCommand {
-						requestedPath := filepath.Dir(arg)
+						requestedPath := filepath.Clean(filepath.Dir(arg))
 
-						if requestedPath == restrictionPath {
+						if requestedPath == filepath.Clean(restrictionPath) {
 							return restriction["allow"].(bool)
 						}
 
-						fileExt := filepath.Ext(arg)
-
-						if fileExt == "" {
-							// log.Printf("File doesnt have an extension %s, so let the remote PC decide", arg)
-							return true
-						}
-
-						//its a file command (delete, download, rename)
-
-						//if it does have a extension, check if its in an allowed subdirectory
+						// check if its a subdirectory of the restricted path
 						if strings.Index(requestedPath, restrictionPath) == 0 {
 							allowSubDir, ok := restriction["allow_subdir"].(bool)
 
 							if !ok {
-								allowSubDir = true
+								return true
 							}
 
-							log.Printf("Command allowed on subdir: %s == %v", requestedPath, allowSubDir)
+							if !allowSubDir {
+								log.Printf("Command not allowed on subdir: %s", requestedPath)
+							}
+
 							return allowSubDir
 						}
 					}
