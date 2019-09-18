@@ -11,3 +11,7 @@ As variaveis PORT e MONGODB_HOST sao opcionais
 PORT padrao 9002
 
 MONGODB_HOST padrao mongo:27017
+
+App: https://github.com/arthurdm10/remote-pc-app
+
+Client: https://github.com/arthurdm10/remote-pc-client
