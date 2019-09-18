@@ -9,10 +9,11 @@ services:
   remote-pc-server:
     build: .
     ports:
-      - '9002:9002'
+      - '${PORT:-9002}:${PORT:-9002}'
     environment:
       - ADMIN_USER
       - ADMIN_PASSWORD
       - MONGODB_HOST
+      - PORT
     depends_on:
       - mongo
