@@ -1,0 +1,33 @@
+{
+  "username": "username",
+  "permissions": {
+    "commands": {
+      "ls_dir": {
+        "allow": false,
+
+        "restrictions": [{ "path": "/home/test", "allow": true }]
+      },
+      "download_file": {
+        "allow": true,
+        "restrictions": [
+          {
+            "path": "/home/test",
+
+            "allow": false,
+            "allow_subdir": true
+          }
+        ]
+      },
+      "delete_file": {
+        "allow": false,
+        "restrictions": [
+          {
+            "path": "/home/test/some/dir",
+            "allow": true,
+            "allow_subdir": true
+          }
+        ]
+      }
+    }
+  }
+}

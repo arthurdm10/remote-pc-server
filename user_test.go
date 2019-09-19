@@ -56,7 +56,7 @@ func setup(db *mongo.Database) error {
 
 	collection.InsertOne(ctx, pcData)
 
-	userPermissions, err := ioutil.ReadFile("notes/user_restrictions.json")
+	userPermissions, err := ioutil.ReadFile("permissions.json")
 	if err != nil {
 		return err
 	}
@@ -101,10 +101,10 @@ func TestSuiteUser(t *testing.T) {
 	userConnectURL := "ws" + strings.TrimPrefix(server.URL, "http") + "/access/" + key
 
 	authHeader := http.Header{"X-Username": []string{"username"}, "X-Password": []string{"passwd"}}
-	pcAuthHeader := http.Header{"X-Username": []string{"test"}, "X-Password": []string{"test"}}
+	// pcAuthHeader := http.Header{"X-Username": []string{"test"}, "X-Password": []string{"test"}}
 
 	//cria um PC remoto
-	wsPcConn, response, err := websocket.DefaultDialer.Dial(createRemotePcURL, pcAuthHeader)
+	wsPcConn, response, err := websocket.DefaultDialer.Dial(createRemotePcURL, authHeader)
 	assert.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
 	assert.Nil(t, err)
 
@@ -173,31 +173,31 @@ func TestSuiteUser(t *testing.T) {
 		assert.Nil(t, wsController.remotePcs[key].user)
 	})
 
-	t.Run("userCantListFilesInDisallowedDir", func(t *testing.T) {
-		ws, response, err := websocket.DefaultDialer.Dial(userConnectURL, authHeader)
+	// t.Run("userCantListFilesInDisallowedDir", func(t *testing.T) {
+	// 	ws, response, err := websocket.DefaultDialer.Dial(userConnectURL, authHeader)
 
-		assert.Nil(t, err)
-		assert.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
-		assert.NotNil(t, wsController.remotePcs[key].user)
+	// 	assert.Nil(t, err)
+	// 	assert.Equal(t, http.StatusSwitchingProtocols, response.StatusCode)
+	// 	assert.NotNil(t, wsController.remotePcs[key].user)
 
-		commandRequest := Json{"type": "command", "cmd": "ls_dir", "args": []string{"/etc"}, "stream": false}
-		err = ws.WriteJSON(commandRequest)
+	// 	commandRequest := Json{"type": "command", "cmd": "ls_dir", "args": []string{"/home/test"}, "stream": false}
+	// 	err = ws.WriteJSON(commandRequest)
 
-		assert.Nil(t, err)
-		jsonResponse := make(Json)
+	// 	assert.Nil(t, err)
+	// 	jsonResponse := make(Json)
 
-		err = ws.ReadJSON(&jsonResponse)
-		assert.Nil(t, err)
+	// 	err = ws.ReadJSON(&jsonResponse)
+	// 	assert.Nil(t, err)
 
-		errorMsg, ok := jsonResponse["error_msg"].(string)
-		assert.True(t, ok)
-		assert.Equal(t, "Permission Denied", errorMsg)
+	// 	errorMsg, ok := jsonResponse["error_msg"].(string)
+	// 	assert.True(t, ok)
+	// 	assert.Equal(t, "Permission Denied", errorMsg)
 
-		errorCode, ok := jsonResponse["error_code"].(float64)
-		assert.True(t, ok)
-		assert.Equal(t, PermissionDenied, int(errorCode))
+	// 	errorCode, ok := jsonResponse["error_code"].(float64)
+	// 	assert.True(t, ok)
+	// 	assert.Equal(t, PermissionDenied, int(errorCode))
 
-		ws.Close()
-	})
+	// 	ws.Close()
+	// })
 
 }
