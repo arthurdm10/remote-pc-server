@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http"
@@ -54,8 +55,8 @@ func NewWsController(adminUsername, adminPassword, mongoDbHost, dbName string) *
 
 	return &WsController{
 		make(map[string]*RemotePC),
-		adminUsername,
-		adminPassword,
+		fmt.Sprintf("%x", sha256.Sum256([]byte(adminUsername))),
+		fmt.Sprintf("%x", sha256.Sum256([]byte(adminPassword))),
 		make(chan string),
 		client.Database(dbName),
 	}
